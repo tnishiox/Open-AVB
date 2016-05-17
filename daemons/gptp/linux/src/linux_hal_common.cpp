@@ -54,12 +54,14 @@
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/prctl.h>
 
 #include <sys/socket.h>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
+
 
 Timestamp tsToTimestamp(struct timespec *ts)
 {
@@ -116,10 +118,9 @@ net_result LinuxNetworkInterface::send
 }
 
 
-void LinuxNetworkInterface::disable_clear_rx_queue() {
+void LinuxNetworkInterface::disable_rx_queue() {
 	struct packet_mreq mr_8021as;
 	int err;
-	char buf[256];
 
 	if( !net_lock.lock() ) {
 		fprintf( stderr, "D rx lock failed\n" );
@@ -141,14 +142,15 @@ void LinuxNetworkInterface::disable_clear_rx_queue() {
 		return;
 	}
 
-	while( recvfrom( sd_event, buf, 256, MSG_DONTWAIT, NULL, 0 ) != -1 );
-
 	return;
 }
 
-void LinuxNetworkInterface::reenable_rx_queue() {
+void LinuxNetworkInterface::clear_reenable_rx_queue() {
 	struct packet_mreq mr_8021as;
+	char buf[256];
 	int err;
+
+	while( recvfrom( sd_event, buf, 256, MSG_DONTWAIT, NULL, 0 ) != -1 );
 
 	memset( &mr_8021as, 0, sizeof( mr_8021as ));
 	mr_8021as.mr_ifindex = ifindex;
@@ -287,6 +289,9 @@ void *LinuxTimerQueueHandler( void *arg ) {
 	sigset_t waitfor;
 	struct timespec timeout;
 	timeout.tv_sec = 0; timeout.tv_nsec = 100000000; /* 100 ms */
+
+	// Ingoring the return value
+	/* s = */ prctl(PR_SET_NAME, "gPTPTimerQueue", NULL, NULL, NULL);
 
 	sigemptyset( &waitfor );
 
@@ -683,6 +688,13 @@ bool LinuxThread::start(OSThreadFunction function, void *arg) {
 
 	return true;
 }
+
+void LinuxThread::setName(const char *name)
+{
+	// Ingoring the return value
+	/* s = */ prctl(PR_SET_NAME, name, NULL, NULL, NULL);
+}
+
 
 bool LinuxThread::join(OSThreadExitCode & exit_code) {
 	int err;

@@ -390,10 +390,6 @@ class IEEE1588Port {
 
 	PTPMessageSync *last_sync;
 
-	OSThread *listening_thread;
-
-	OSThread *link_thread;
-
 	OSCondition *port_ready_condition;
 
 	OSLock *pdelay_rx_lock;
@@ -426,6 +422,8 @@ class IEEE1588Port {
 
  public:
 	bool forceSlave;	//!< Forces port to be slave. Added for testing.
+	OSThread *listening_thread;
+	OSThread *link_thread;
 
 	/**
 	 * @brief  Serializes (i.e. copy over buf pointer) the information from
@@ -546,6 +544,14 @@ class IEEE1588Port {
 			_peer_offset_init = false;
 		}
 		asCapable = ascap;
+	}
+
+	/**
+	 * @brief  Restart PDelay
+	 * @return void
+	 */
+	void restartPDelay() {
+		_peer_offset_init = false;
 	}
 
 	/**
