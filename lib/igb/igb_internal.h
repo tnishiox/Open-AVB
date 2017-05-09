@@ -159,6 +159,7 @@ struct adapter {
 	struct e1000_hw hw;
 
 	sem_t *memlock;
+	int lock_fd;
 
 	int ldev; /* file descriptor to igb */
 
