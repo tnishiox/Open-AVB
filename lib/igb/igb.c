@@ -162,6 +162,8 @@ int igb_attach(char *dev_path, device_t *pdev)
 		goto err_bind;
 	}
 
+	adapter->active = 1;
+
 	if (igb_lock(pdev) != 0) {
 		error = -errno;
 		goto err_bind;
@@ -315,6 +317,13 @@ int igb_detach(device_t *dev)
 
 	if (igb_lock(dev) != 0)
 		goto err_nolock;
+
+	/*
+	 * Prevent access to device after calling igb_detach since associated
+	 * resources will be freed up from here thus in particular multi-thread
+	 * application other thread must not access device if this flag is off.
+	 */
+	adapter->active = 0;
 
 	igb_reset(adapter);
 
@@ -1125,6 +1134,12 @@ int igb_lock(device_t *dev)
 	if (sem_wait(adapter->memlock) != 0)
 		return -errno;
 
+	if (adapter->active != 1) {
+		// igb_detach is in progress
+		(void)sem_post(adapter->memlock);
+		return -EINVAL;
+	}
+
 	// inter-process lock
 	fl.l_type = F_WRLCK;	// write-lock (exclusive lock)
 	fl.l_whence = SEEK_SET;
@@ -1616,6 +1631,12 @@ int igb_refresh_buffers(device_t *dev, u_int32_t idx,
 	if (sem_trywait(&rxr->lock) != 0)
 		return errno; /* EAGAIN */
 
+	if (adapter->active != 1) {
+		// igb_detach is in progress
+		sem_post(&rxr->lock);
+		return -EINVAL;
+	}
+
 	i = j = rxr->next_to_refresh;
 	cur_pkt = *rxbuf_packets;
 
@@ -1703,6 +1724,12 @@ int igb_receive(device_t *dev, unsigned int queue_index,
 
 	if (sem_trywait(&rxr->lock) != 0)
 		return errno; /* EAGAIN */
+
+	if (adapter->active != 1) {
+		// igb_detach is in progress
+		sem_post(&rxr->lock);
+		return -EINVAL;
+	}
 
 	/* Main clean loop - receive packets until no more
 	 * received_packets[]
