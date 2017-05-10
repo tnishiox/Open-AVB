@@ -213,7 +213,7 @@ int igb_attach(char *dev_path, device_t *pdev)
 
 	if (igb_unlock(pdev) != 0) {
 		error = -errno;
-		goto err_late;
+		goto err_gen;
 	}
 
 	return 0;
@@ -2250,7 +2250,7 @@ int igb_set_class_bandwidth2(device_t *dev, u_int32_t class_a_bytes_per_second,
 	E1000_WRITE_REG(hw, E1000_TQAVCTRL, tqavctrl);
 
 unlock:
-	if (igb_lock(dev) != 0)
+	if (igb_unlock(dev) != 0)
 		error = errno;
 
 	return error;
