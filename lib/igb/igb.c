@@ -2437,6 +2437,9 @@ static int igb_create_lock(struct adapter *adapter)
 	struct stat stat;
 	mode_t fmode = S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP;
 
+	bool attr_allocated = false;
+	pthread_mutexattr_t attr;
+
 	if (!adapter) {
 		errno = EINVAL;
 		goto err;
@@ -2501,8 +2504,6 @@ static int igb_create_lock(struct adapter *adapter)
 		goto err;
 
 	if (stat.st_size == 0) { // file is empty, do initialization
-		pthread_mutexattr_t attr;
-
 		/*
 		 * file-size becomes non-zero and given that when other processes
 		 * attach lib igb we can skip the initialization code for the mutex.
@@ -2512,6 +2513,8 @@ static int igb_create_lock(struct adapter *adapter)
 
 		if (pthread_mutexattr_init(&attr) != 0)
 			goto err;
+
+		attr_allocated = true;
 
 		// to be used for both inter-process and inter-thread synchronization
 		if (pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED) != 0)
@@ -2527,9 +2530,13 @@ static int igb_create_lock(struct adapter *adapter)
 
 	error = 0;
 err:
+	// no actual effect but to avoid a warning from a static code analyzer
+	if (attr_allocated)
+		(void) pthread_mutexattr_destroy(&attr);
+
 	if (error != 0) {
 		error = -errno;
-		if (adapter->memlock) {
+		if (adapter && adapter->memlock) {
 			(void) munmap(adapter->memlock, sizeof(pthread_mutex_t));
 			adapter->memlock = NULL;
 		}
