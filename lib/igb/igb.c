@@ -229,7 +229,7 @@ err_pci:
 err_bind:
 	if (locked)
 		(void) igb_unlock(pdev);
-	if (adapter->memlock) {
+	if (adapter && adapter->memlock) {
 		(void) munmap(adapter->memlock, sizeof(pthread_mutex_t));
 		adapter->memlock = NULL;
 	}
@@ -347,7 +347,21 @@ int igb_detach(device_t *dev)
 
 err_nolock:
 	if (adapter->memlock) {
-		(void) munmap(adapter->memlock, sizeof(pthread_mutex_t));
+		/*
+		 * Do not unmap the shared memory region holding the pthread mutex.
+		 *
+		 * (void) munmap(adapter->memlock, sizeof(pthread_mutex_t));
+		 *
+		 * The pthread mutex is configured as a robust type mutex so that
+		 * it can automatically be unlocked on process termination if needed.
+		 * In order to complete the cleanup, the memory region holding the
+		 * mutex instance must be accessible until that cleanup timing.
+		 * Therefore we should not unmap the memory region here, otherwise
+		 * the cleanup may fail.
+		 *
+		 * The mapped regions will automatically be unmapped at the end of
+		 * the process termination.
+		 */
 		adapter->memlock = NULL;
 	}
 
@@ -1140,6 +1154,9 @@ int igb_lock(device_t *dev)
 	if (adapter == NULL)
 		return -ENXIO;
 
+	if (!adapter->active)
+		return -ENXIO;
+
 	if (!adapter->memlock)
 		return -ENXIO;
 
@@ -1160,7 +1177,7 @@ int igb_lock(device_t *dev)
 	if (adapter->active != 1) {
 		// detach is in progress
 		(void) pthread_mutex_unlock(adapter->memlock);
-		return -EINVAL;
+		return -ENXIO;
 	}
 
 	return 0;
@@ -2470,7 +2487,7 @@ static int igb_create_lock(struct adapter *adapter)
 	(void) fchmod(fd, fmode); // just to make sure fmode is applied
 
 	// shared memory holding the mutex instance
-	adapter->memlock = mmap(NULL, sizeof(pthread_mutex_t),
+	adapter->memlock = (pthread_mutex_t*) mmap(NULL, sizeof(pthread_mutex_t),
 							PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
 	if (!adapter->memlock)
 		goto err;
