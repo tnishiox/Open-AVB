@@ -1154,7 +1154,7 @@ int igb_lock(device_t *dev)
 	if (adapter == NULL)
 		return -ENXIO;
 
-	if (!adapter->active)
+	if (adapter->active != 1)	// detach in progress
 		return -ENXIO;
 
 	if (!adapter->memlock)
@@ -1175,7 +1175,6 @@ int igb_lock(device_t *dev)
 	}
 
 	if (adapter->active != 1) {
-		// detach is in progress
 		(void) pthread_mutex_unlock(adapter->memlock);
 		return -ENXIO;
 	}
@@ -1627,6 +1626,9 @@ int igb_refresh_buffers(device_t *dev, u_int32_t idx,
 	if (adapter == NULL)
 		return -EINVAL;
 
+	if (adapter->active != 1)	// detach in progress
+		return -ENXIO;
+
 	if (rxbuf_packets == NULL)
 		return -EINVAL;
 
@@ -1641,9 +1643,8 @@ int igb_refresh_buffers(device_t *dev, u_int32_t idx,
 		return errno; /* EAGAIN */
 
 	if (adapter->active != 1) {
-		// detach is in progress
 		sem_post(&rxr->lock);
-		return -EINVAL;
+		return -ENXIO;
 	}
 
 	i = j = rxr->next_to_refresh;
@@ -1713,6 +1714,9 @@ int igb_receive(device_t *dev, unsigned int queue_index,
 	if (adapter == NULL)
 		return -ENXIO;
 
+	if (adapter->active != 1)	// detach in progress
+		return -ENXIO;
+
 	if (queue_index > adapter->num_queues)
 		return -EINVAL;
 
@@ -1735,9 +1739,8 @@ int igb_receive(device_t *dev, unsigned int queue_index,
 		return errno; /* EAGAIN */
 
 	if (adapter->active != 1) {
-		// detach is in progress
 		sem_post(&rxr->lock);
-		return -EINVAL;
+		return -ENXIO;
 	}
 
 	/* Main clean loop - receive packets until no more
