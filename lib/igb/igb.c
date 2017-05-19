@@ -101,6 +101,8 @@ static void igb_free_receive_structures(struct adapter *adapter);
 static void igb_tx_ctx_setup(struct tx_ring *txr, struct igb_packet *packet);
 static void igb_free_receive_buffers(struct rx_ring *rxr);
 static int  igb_create_lock(struct adapter *adapter);
+static inline int igb_do_lock(struct adapter *adapter);
+static inline int igb_do_unlock(struct adapter *adapter);
 
 int igb_probe(device_t *dev)
 {
@@ -165,7 +167,7 @@ int igb_attach(char *dev_path, device_t *pdev)
 
 	adapter->active = 1;
 
-	if (igb_lock(pdev) != 0) {
+	if (igb_do_lock(adapter) != 0) {
 		error = -errno;
 		goto err_bind;
 	}
@@ -216,7 +218,7 @@ int igb_attach(char *dev_path, device_t *pdev)
 		goto err_late;
 	}
 
-	if (igb_unlock(pdev) != 0) {
+	if (igb_do_unlock(adapter) != 0) {
 		error = -errno;
 		goto err_gen;
 	}
@@ -227,11 +229,13 @@ err_late:
 err_pci:
 	igb_free_pci_resources(adapter);
 err_bind:
-	if (locked)
-		(void) igb_unlock(pdev);
-	if (adapter && adapter->memlock) {
-		(void) munmap(adapter->memlock, sizeof(pthread_mutex_t));
-		adapter->memlock = NULL;
+	if (adapter) {
+		if (locked)
+			(void) igb_do_unlock(adapter);
+		if (adapter->memlock) {
+			(void) munmap(adapter->memlock, sizeof(pthread_mutex_t));
+			adapter->memlock = NULL;
+		}
 	}
 	close(adapter->ldev);
 err_prebind:
@@ -255,7 +259,7 @@ int igb_attach_tx(device_t *pdev)
 	if (adapter == NULL)
 		return -EINVAL;
 
-	if (igb_lock(pdev) != 0)
+	if (igb_do_lock(adapter) != 0)
 		return -errno;
 
 	/* Allocate and Setup Queues */
@@ -274,7 +278,7 @@ int igb_attach_tx(device_t *pdev)
 	igb_reset(adapter);
 
 release:
-	if (igb_unlock(pdev) != 0)
+	if (igb_do_unlock(adapter) != 0)
 		return -errno;
 
 	return error;
@@ -293,7 +297,7 @@ int igb_attach_rx(device_t *pdev)
 	if (adapter == NULL)
 		return -EINVAL;
 
-	if (igb_lock(pdev) != 0)
+	if (igb_do_lock(adapter) != 0)
 		return errno;
 
 	/*
@@ -307,7 +311,7 @@ int igb_attach_rx(device_t *pdev)
 	}
 
 release:
-	if (igb_unlock(pdev) != 0)
+	if (igb_do_unlock(adapter) != 0)
 		return errno;
 
 	return error;
@@ -323,7 +327,7 @@ int igb_detach(device_t *dev)
 	if (adapter == NULL)
 		return -ENXIO;
 
-	if (igb_lock(dev) != 0)
+	if (igb_do_lock(adapter) != 0)
 		goto err_nolock;
 
 	/*
@@ -335,7 +339,7 @@ int igb_detach(device_t *dev)
 
 	igb_reset(adapter);
 
-	igb_unlock(dev);
+	igb_do_unlock(adapter);
 
 	igb_free_pci_resources(adapter);
 
@@ -393,7 +397,7 @@ int igb_suspend(device_t *dev)
 
 	txdctl = 0;
 
-	if (igb_lock(dev) != 0)
+	if (igb_do_lock(adapter) != 0)
 		return errno;
 
 	/* stop but don't reset the Tx Descriptor Rings */
@@ -430,7 +434,7 @@ int igb_suspend(device_t *dev)
 		E1000_WRITE_REG(hw, E1000_RXDCTL(i), rxdctl);
 	}
 
-	if (igb_unlock(dev) != 0)
+	if (igb_do_unlock(adapter) != 0)
 		return errno;
 
 	return 0;
@@ -457,7 +461,7 @@ int igb_resume(device_t *dev)
 
 	txdctl = 0;
 
-	if (igb_lock(dev) != 0)
+	if (igb_do_lock(adapter) != 0)
 		return errno;
 
 	/* resume but don't reset the Tx Descriptor Rings */
@@ -497,7 +501,7 @@ int igb_resume(device_t *dev)
 		E1000_WRITE_REG(hw, E1000_RXDCTL(i), rxdctl);
 	}
 
-	if (igb_unlock(dev) != 0)
+	if (igb_do_unlock(adapter) != 0)
 		return errno;
 
 	return 0;
@@ -513,7 +517,7 @@ int igb_init(device_t *dev)
 	if (adapter == NULL)
 		return -ENXIO;
 
-	if (igb_lock(dev) != 0)
+	if (igb_do_lock(adapter) != 0)
 		return errno;
 
 	igb_reset(adapter);
@@ -529,7 +533,7 @@ int igb_init(device_t *dev)
 		igb_initialize_receive_units(adapter);
 	}
 
-	if (igb_unlock(dev) != 0)
+	if (igb_do_unlock(adapter) != 0)
 		return errno;
 
 	return 0;
@@ -676,12 +680,12 @@ int igb_dma_malloc_page(device_t *dev, struct igb_dma_alloc *dma)
 	if (adapter == NULL)
 		return -ENXIO;
 
-	if (igb_lock(dev) != 0) {
+	if (igb_do_lock(adapter) != 0) {
 		error = errno;
 		goto err;
 	}
 	error = ioctl(adapter->ldev, IGB_MAPBUF, &ubuf);
-	if (igb_unlock(dev) != 0) {
+	if (igb_do_unlock(adapter) != 0) {
 		error = errno;
 		goto err;
 	}
@@ -725,11 +729,11 @@ void igb_dma_free_page(device_t *dev, struct igb_dma_alloc *dma)
 
 	ubuf.physaddr = dma->dma_paddr;
 
-	if (igb_lock(dev) != 0)
+	if (igb_do_lock(adapter) != 0)
 		goto err;
 
 	ioctl(adapter->ldev, IGB_UNMAPBUF, &ubuf);
-	if (igb_unlock(dev) != 0)
+	if (igb_do_unlock(adapter) != 0)
 		goto err;
 
 	dma->dma_paddr = 0;
@@ -994,7 +998,7 @@ int igb_xmit(device_t *dev, unsigned int queue_index, struct igb_packet *packet)
 	if (packet == NULL)
 		return -EINVAL;
 
-	if (igb_lock(dev) != 0)
+	if (igb_do_lock(adapter) != 0)
 		return errno;
 
 	packet->next = NULL; /* used for cleanup */
@@ -1086,7 +1090,7 @@ int igb_xmit(device_t *dev, unsigned int queue_index, struct igb_packet *packet)
 	++txr->tx_packets;
 
 unlock:
-	if (igb_unlock(dev) != 0)
+	if (igb_do_unlock(adapter) != 0)
 		return errno;
 
 	return error;
@@ -1103,11 +1107,11 @@ void igb_trigger(device_t *dev, u_int32_t data)
 	if (adapter == NULL)
 		return;
 
-	if (igb_lock(dev) != 0)
+	if (igb_do_lock(adapter) != 0)
 		return;
 
 	E1000_WRITE_REG(&(adapter->hw), E1000_WUS, data);
-	if (igb_unlock(dev) != 0)
+	if (igb_do_unlock(adapter) != 0)
 		return;
 }
 
@@ -1154,32 +1158,7 @@ int igb_lock(device_t *dev)
 	if (adapter == NULL)
 		return -ENXIO;
 
-	if (adapter->active != 1)	// detach in progress
-		return -ENXIO;
-
-	if (!adapter->memlock)
-		return -ENXIO;
-
-	error = pthread_mutex_lock(adapter->memlock);
-	switch (error) {
-		case 0:
-			break;
-		case EOWNERDEAD:
-			// some process terminated without unlocking the mutex
-			if (pthread_mutex_consistent(adapter->memlock) != 0)
-				return -errno;
-			break;
-		default:
-			return -errno;
-			break;
-	}
-
-	if (adapter->active != 1) {
-		(void) pthread_mutex_unlock(adapter->memlock);
-		return -ENXIO;
-	}
-
-	return 0;
+	return igb_do_lock(adapter);
 }
 
 int igb_unlock(device_t *dev)
@@ -1193,10 +1172,7 @@ int igb_unlock(device_t *dev)
 	if (adapter == NULL)
 		return -ENXIO;
 
-	if (!adapter->memlock)
-		return -ENXIO;
-
-	return pthread_mutex_unlock(adapter->memlock);
+	return igb_do_unlock(adapter);
 }
 
 /**********************************************************************
@@ -1226,7 +1202,7 @@ void igb_clean(device_t *dev, struct igb_packet **cleaned_packets)
 
 	*cleaned_packets = NULL; /* nothing reclaimed yet */
 
-	if (igb_lock(dev) != 0)
+	if (igb_do_lock(adapter) != 0)
 		return;
 
 	for (i = 0; i < adapter->num_queues; i++) {
@@ -1311,7 +1287,7 @@ void igb_clean(device_t *dev, struct igb_packet **cleaned_packets)
 		if (txr->tx_avail >= IGB_QUEUE_THRESHOLD)
 			txr->queue_status &= ~IGB_QUEUE_DEPLETED;
 	}
-	igb_unlock(dev);
+	igb_do_unlock(adapter);
 }
 
 /*********************************************************************
@@ -1870,7 +1846,7 @@ int igb_get_wallclock(device_t *dev, u_int64_t *curtime, u_int64_t *rdtsc)
 
 	hw = &adapter->hw;
 
-	if (igb_lock(dev) != 0)
+	if (igb_do_lock(adapter) != 0)
 		return errno;
 
 	/* sample the timestamp bracketed by the RDTSC */
@@ -1899,7 +1875,7 @@ int igb_get_wallclock(device_t *dev, u_int64_t *curtime, u_int64_t *rdtsc)
 		}
 	}
 
-	if (igb_unlock(dev) != 0) {
+	if (igb_do_unlock(adapter) != 0) {
 		error = errno;
 		goto err;
 	}
@@ -1961,7 +1937,7 @@ int igb_gettime(device_t *dev, clockid_t clk_id, u_int64_t *curtime,
 
 	hw = &adapter->hw;
 
-	if (igb_lock(dev) != 0)
+	if (igb_do_lock(adapter) != 0)
 		return errno;
 
 	/* sample the timestamp bracketed by the clock_gettime() */
@@ -1995,7 +1971,7 @@ int igb_gettime(device_t *dev, clockid_t clk_id, u_int64_t *curtime,
 		}
 	}
 
-	if (igb_unlock(dev) != 0) {
+	if (igb_do_unlock(adapter) != 0) {
 		error = errno;
 		goto err;
 	}
@@ -2057,7 +2033,7 @@ int igb_set_class_bandwidth(device_t *dev, u_int32_t class_a, u_int32_t class_b,
 	if (tpktsz_b > 1500)
 		return -EINVAL;
 
-	if (igb_lock(dev) != 0)
+	if (igb_do_lock(adapter) != 0)
 		return errno;
 
 	tqavctrl = E1000_READ_REG(hw, E1000_TQAVCTRL);
@@ -2151,7 +2127,7 @@ int igb_set_class_bandwidth(device_t *dev, u_int32_t class_a, u_int32_t class_b,
 	E1000_WRITE_REG(hw, E1000_TQAVCTRL, tqavctrl);
 
 unlock:
-	if (igb_unlock(dev) != 0)
+	if (igb_do_unlock(adapter) != 0)
 		error = errno;
 
 	return error;
@@ -2199,7 +2175,7 @@ int igb_set_class_bandwidth2(device_t *dev, u_int32_t class_a_bytes_per_second,
 	if (link.duplex != FULL_DUPLEX)
 		return -EINVAL;
 
-	if (igb_lock(dev) != 0)
+	if (igb_do_lock(adapter) != 0)
 		return errno;
 
 	tqavctrl = E1000_READ_REG(hw, E1000_TQAVCTRL);
@@ -2289,7 +2265,7 @@ int igb_set_class_bandwidth2(device_t *dev, u_int32_t class_a_bytes_per_second,
 	E1000_WRITE_REG(hw, E1000_TQAVCTRL, tqavctrl);
 
 unlock:
-	if (igb_unlock(dev) != 0)
+	if (igb_do_unlock(adapter) != 0)
 		error = errno;
 
 	return error;
@@ -2571,4 +2547,35 @@ err:
 	}
 
 	return error;
+}
+
+static inline int igb_do_lock(struct adapter *adapter)
+{
+	int ret = -1;
+
+	if (!adapter->memlock || adapter->active != 1)
+		return -ENXIO;
+
+	ret = pthread_mutex_lock(adapter->memlock);
+	if (ret == EOWNERDEAD) // process terminated without unlocking the mutex
+		ret = pthread_mutex_consistent(adapter->memlock);
+
+	if (ret == 0) {
+		if (adapter->active != 1) {	// detach in progress
+			(void) pthread_mutex_unlock(adapter->memlock);
+			ret = -ENXIO;
+		}
+	}else {
+		ret = -errno;
+	}
+
+	return ret;
+}
+
+static inline int igb_do_unlock(struct adapter *adapter)
+{
+	if (!adapter->memlock)
+		return -ENXIO;
+
+	return pthread_mutex_unlock(adapter->memlock);
 }
